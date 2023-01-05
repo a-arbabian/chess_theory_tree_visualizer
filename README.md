@@ -11,5 +11,6 @@ TODO:
 - [x] learn how to use ECO codes
 - [x] plot K most popular openings/ECO codes on Netgraph
 - [ ] try using PyQT or d3.js to overlay chess board for each position
+    - PyQT example: https://github.com/paulbrodersen/netgraph/issues/46
 
 

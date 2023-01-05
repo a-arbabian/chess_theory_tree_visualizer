@@ -1,19 +1,22 @@
 import io
 import json
+import numpy as np
 import matplotlib; matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import networkx as nx
 from netgraph import Graph, InteractiveGraph, get_sugiyama_layout
 import chess 
 import chess.pgn
 import chess.svg
 
-DEPTH = 4
+MAX_GAME_DEPTH = 6
 GAMES = 1e6
-MAX_EDGE_WIDTH = 10
+MAX_EDGE_WIDTH = 12
 MIN_EDGE_WIDTH = 0.2
-NODE_SIZE = 6
-COUNT_CUTOFF_FRACTION = 0.02 # 2% of games
+COUNT_CUTOFF_FRACTION = 0.02 # must account for at least 2% of games
+NODE_SIZE = 5
+SCALE = (1., 2.)
 
 
 def count_games_in_pgn(pgn):
@@ -28,22 +31,44 @@ def count_games_in_pgn(pgn):
 def normalize_edge_width(counter):
     return MIN_EDGE_WIDTH + (MAX_EDGE_WIDTH - MIN_EDGE_WIDTH) * (counter / GAMES)
 
-def get_counter_percent(counter):
-    return round(counter / GAMES * 100, 2)
+def get_counter_percent(counter, total):
+    if total == 0:
+        return 0
+    return round(counter / total * 100, 2)
 
 def visualize_tree(tree, edge_counters=False):
+    fig, ax = plt.subplots()
+    # Node colors based on ECO Code 
+    color_map = {
+        'A': ('red', 'Flank Openings'),
+        'B': ('orange', "'Semi-Open' games (Other than the French Defence)"),
+        'C': ('yellow', "'Open' games (and the French Defence)"),
+        'D': ('green', "'Closed' games and 'Semi-Closed' games (incl. the Grünfeld Defence)"),
+        'E': ('blue', "Indian Defences (Other than the Grünfeld Defence)"),
+        '0': ('white', 'No ECO Code'),
+    }
+    node_color = {node: color_map[data.get('eco', '0')[0]][0] for node, data in tree.nodes(data=True)}
+    
     # Annotations
-    annotations = nx.get_node_attributes(tree, 'label')
+    annotations = nx.get_node_attributes(tree, 'eco')
     
     # Node layout (left to right)
-    node_positions = get_sugiyama_layout(list(tree.edges), node_size=NODE_SIZE)
+    node_positions = get_sugiyama_layout(list(tree.edges), 
+                                         node_size=NODE_SIZE,
+                                         scale=SCALE)
     node_positions = {node : (-x, y) for node, (y, x) in node_positions.items()}
+    # print(node_positions.values())
+
+    # Node labels
+    node_labels = nx.get_node_attributes(tree, 'label')
+    node_labels = {node: '\n'.join(label.split()) for node, label in node_labels.items()}
     
-    
-    fig, ax = plt.subplots(figsize=(16, 8))
     if edge_counters:
+        # Edge labels are the move SAN notation and
+        #   the percentage of games that move was played from previous position
         edge_labels = {
-            (n1, n2): f"{data['label']}\n{get_counter_percent(tree.edges[(n1, n2)]['counter'])}%"
+            (n1, n2): f"{data['label']}\n"
+            f"{get_counter_percent(tree.edges[(n1, n2)]['counter'], tree.nodes[n1]['counter'])}%"
             for n1, n2, data in tree.edges(data=True)
             }
         edge_width = {
@@ -55,12 +80,28 @@ def visualize_tree(tree, edge_counters=False):
         edge_width = 0.5
     plot_instance = InteractiveGraph(tree, ax=ax,
                                     node_layout=node_positions,
-                                    node_labels=nx.get_node_attributes(tree, 'eco'),
+                                    node_size=NODE_SIZE,
+                                    node_color=node_color,
+                                    node_labels=node_labels,
                                     node_label_fontdict=dict(size=10),
                                     edge_labels=edge_labels,
+                                    edge_label_fontdict=dict(size=7),
                                     edge_width=edge_width,
                                     annotations=annotations,
+                                    scale=SCALE,
                                     )
+    
+    # Legend
+    handles = []
+    for col, name in color_map.values():
+        patch = mpatches.Patch(color=col, label=name)
+        handles.append(patch)
+    ax.legend(handles=handles, loc='best')
+    
+    # Resize figure 
+    fig.subplots_adjust(left=0, bottom=0, right=1, top=1)
+    
+    # fig.savefig('test.pdf', dpi=300)
     return plot_instance
     
 
@@ -69,7 +110,7 @@ def parse_eco_data_to_tree(pgn_path: str, save=False) -> 'nx.DiGraph':
     theory_tree = nx.DiGraph()
     # Make root node with starting FEN position
     
-    theory_tree.add_node(chess.STARTING_FEN, label='Starting\nPosition', eco='00')
+    theory_tree.add_node(chess.STARTING_FEN, label='Starting\nPosition', eco='00', counter=0)
     root = list(theory_tree.nodes)[0]
     
     pgn = open(pgn_path, encoding="utf-8-sig")
@@ -105,7 +146,7 @@ def parse_eco_data_to_tree(pgn_path: str, save=False) -> 'nx.DiGraph':
             board.push(move)
             if board.fen() not in theory_tree.nodes:
                 # First time seeing this board, add the node and connect to the preceding board
-                theory_tree.add_node(board.fen())
+                theory_tree.add_node(board.fen(), counter=0)
                 theory_tree.add_edge(prev_board_fen, board.fen(), label=san, counter=0)
                 
                 if move_idx == num_moves - 1:
@@ -155,12 +196,13 @@ if __name__ == "__main__":
         # starting position/root node
         board = game.board()
         if board.fen() != chess.STARTING_FEN:
-            # skip games that don't start from the root node
+            # skip games that don't start from the starting FEN position
             continue
+        tree.nodes[board.fen()]['counter'] += 1
         
         print("Parsing game", game_idx)
         for move_idx, move in enumerate(game.mainline_moves()):
-            if move_idx > DEPTH:
+            if move_idx > MAX_GAME_DEPTH:
                 break
             
             # Keep the previous board position for edge creation
@@ -173,7 +215,11 @@ if __name__ == "__main__":
          
             if board.fen() in tree.nodes:
                 try:
+                    tree.nodes[board.fen()]['counter'] += 1
                     tree.edges[(prev_board_fen, board.fen())]['counter'] += 1
+                    if eco_code == tree.nodes[board.fen()]['eco']:
+                        # we've reached the deepest ECO node for this game, after this it not theory
+                        break
                 except KeyError:
                     print(f"KeyError: {prev_board_fen} -> {board.fen()}")
                     break
