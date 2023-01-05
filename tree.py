@@ -19,14 +19,13 @@ NODE_SIZE = 5
 SCALE = (1., 2.)
 
 
-def count_games_in_pgn(pgn):
-    counter = 0
-    while True:
-        game = chess.pgn.read_game(pgn)
-        if game is None:
-            break
-        counter += 1
-    return counter
+def count_games_in_pgn(pgn_path):
+    pgn = open(pgn_path, "r")
+    #read content of file to string
+    data = pgn.read()
+    #get number of occurrences of the substring in the string
+    return data.count("[Event")
+    
 
 def normalize_edge_width(counter):
     return MIN_EDGE_WIDTH + (MAX_EDGE_WIDTH - MIN_EDGE_WIDTH) * (counter / GAMES)
@@ -44,7 +43,7 @@ def visualize_tree(tree, edge_counters=False):
         'B': ('orange', "'Semi-Open' games (Other than the French Defence)"),
         'C': ('yellow', "'Open' games (and the French Defence)"),
         'D': ('green', "'Closed' games and 'Semi-Closed' games (incl. the Grünfeld Defence)"),
-        'E': ('blue', "Indian Defences (Other than the Grünfeld Defence)"),
+        'E': ('lightblue', "Indian Defences (Other than the Grünfeld Defence)"),
         '0': ('white', 'No ECO Code'),
     }
     node_color = {node: color_map[data.get('eco', '0')[0]][0] for node, data in tree.nodes(data=True)}
@@ -175,12 +174,14 @@ if __name__ == "__main__":
     # tree = nx.tree_graph(json.load(open('data/eco_tree.json')))
     print("Number of theory nodes:", len(tree.nodes))
     
+    
+    # pgn file with all the games we want to analyze
+    pgn_path = "data/pgn/ficsgamesdb_2022_chess2000_nomovetimes_271748.pgn"
     # Count number of games we have
-    pgn = open("data/pgn/ficsgamesdb_202212_blitz2000_nomovetimes_271471.pgn")
-    GAMES = min(GAMES, count_games_in_pgn(pgn))
+    GAMES = min(GAMES, count_games_in_pgn(pgn_path))
     
     # Now lets go through a database to get counts for each opening
-    pgn = open("data/pgn/ficsgamesdb_202212_blitz2000_nomovetimes_271471.pgn")
+    pgn = open(pgn_path)
     game_idx = 0
     while True:
         game = chess.pgn.read_game(pgn)
